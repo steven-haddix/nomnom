@@ -7,7 +7,7 @@ export type LogObject = {
 		/**
 		 * The unique ID of the request.
 		 */
-		requestID?: string;
+		requestID?: string | undefined;
 		/**
 		 * The HTTP method used in the request.
 		 */

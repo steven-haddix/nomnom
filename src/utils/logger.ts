@@ -131,3 +131,63 @@ export class Log {
 		};
 	}
 }
+
+export const logPlugin = logger.into({
+	autoLogging: {
+		ignore: (ctx) => {
+			// Construct log object
+			const logObject: Log = new Log({
+				request: {
+					ip: (ctx.ip as string) || "",
+					method: ctx.request.method,
+					url: {
+						path: ctx.path,
+						params: Object.fromEntries(
+							new URLSearchParams(new URL(ctx.request.url).search),
+						),
+					},
+				},
+				response: {
+					status_code: ctx.set.status,
+					// @ts-expect-error - TODO: fix typing for startTime
+					time: performance.now() - ctx.store.startTime,
+				},
+			});
+
+			if (ctx.request.headers.has("x-request-id")) {
+				logObject.log.request.requestID =
+					ctx.request.headers.get("x-request-id") || undefined;
+			}
+
+			// Include headers
+			for (const header of ["x-forwarded-for", "authorization"]) {
+				if (ctx.request.headers.has(header)) {
+					logObject.log.request.headers = {
+						...logObject.log.request.headers,
+						[header]: ctx.request.headers.get(header) || "",
+					};
+				}
+			}
+
+			if (ctx.isError) {
+				if (
+					(ctx.store as { error?: string | Error | object }).error !== undefined
+				) {
+					logObject.error = (
+						ctx.store as { error: string | Error | object }
+					).error;
+				}
+
+				const message = logObject.formatJson();
+				logger.error(ctx);
+				logger.error(message);
+				return true;
+			}
+
+			const message = logObject.formatJson();
+
+			logger.info(message);
+			return true;
+		},
+	},
+});

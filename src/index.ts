@@ -1,119 +1,240 @@
 import { Elysia, t } from "elysia";
 import twilio from "twilio";
-import { Log, logger } from "@/utils/logger";
-import { BasicSessionAgent } from "@/services/agent";
+import env from "@/utils/env";
+import { Log, logger, logPlugin } from "@/utils/logger";
+import "@/utils/polyfill";
+import { callRepository } from "@/kv/schema";
+import { ConversationService } from "@/services/conversation";
 import { DeepgramService } from "@/services/deepgram";
 import { getOpenAIResponse } from "@/services/langchain";
+import RestaurantService from "./services/restaurant";
+import type { WebSocketPayload, WebhookPayload } from "@/types/telnyx";
+import { AgentContextFactory } from "./agents/agent-context.factory";
+import { CallService } from "@/services/call.service";
+import { MessageService } from "@/services/message.service";
+import { AgentFactory } from "@/agents/agent.factory";
+import { TelnyxSMSWebhookPayload } from "@/models/telnyx.model";
 
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const appSid = process.env.TWILIO_APP_SID;
-const apiKey = process.env.TWILIO_API_SID;
-const apiSecret = process.env.TWILIO_API_SECRET;
+const accountSid = env.TWILIO_ACCOUNT_SID;
+const authToken = env.TWILIO_AUTH_TOKEN;
+const appSid = env.TWILIO_APP_SID;
+const apiKey = env.TWILIO_API_SID;
+const apiSecret = env.TWILIO_API_SECRET;
 
 if (!accountSid || !appSid || !authToken || !apiKey || !apiSecret) {
 	throw new Error("Missing Twilio credentials");
 }
 
 const client = twilio(accountSid, authToken);
-const deepgram = new DeepgramService();
+const telnyxClient = require("telnyx")(env.TELNYX_API_KEY);
+
+const restaurantService = new RestaurantService();
+const agentContextFactory = new AgentContextFactory(restaurantService);
+const callService = new CallService(new DeepgramService());
+const messageService = new MessageService();
+const agentFactory = new AgentFactory(callService, messageService);
 
 const app = new Elysia()
-	.use(
-		logger.into({
-			autoLogging: {
-				ignore: (ctx) => {
-					let duration = 0;
+	.use(logPlugin)
+	.decorate(() => ({}))
+	.post(
+		"/telnyx/sms",
+		async ({ body: { data }, log }) => {
+			try {
+				if (data.event_type === "message.received") {
+					const agentContext = await agentContextFactory.createContext(
+						undefined,
+						data.payload.to[0].phone_number,
+						data.payload.from.phone_number,
+					);
+					const agent = agentFactory.createAgent(agentContext);
 
-					if (
-						(ctx.store as { requestStart?: bigint }).requestStart !==
-							undefined &&
-						typeof (ctx.store as { requestStart?: bigint }).requestStart ===
-							"bigint"
-					) {
-						duration = Number(
-							process.hrtime.bigint() -
-								(ctx.store as { requestStart: bigint }).requestStart,
-						);
+					await agent.handleSMSMessage(data.payload.text);
+
+					log.info("SMS Message handled");
+					return {};
+				}
+
+				if (data.event_type === "message.finalized") {
+					switch (data.payload.to[0].status) {
+						case "delivered":
+							log.info("Message delivered");
+							break;
+						case "sending_failed":
+						case "delivery_failed":
+							log.error(data, "Message delivery failed");
+							break;
+						default:
+							log.warn(data, "Unhandled message status");
 					}
-
-					// Construct log object
-					const logObject: Log = new Log({
-						request: {
-							ip: ctx.ip,
-							method: ctx.request.method,
-							url: {
-								path: ctx.path,
-								params: Object.fromEntries(
-									new URLSearchParams(new URL(ctx.request.url).search),
-								),
-							},
-						},
-						response: {
-							status_code: ctx.set.status,
-							time: performance.now() - ctx.store.startTime,
-						},
-					});
-
-					if (ctx.request.headers.has("x-request-id")) {
-						logObject.log.request.requestID =
-							ctx.request.headers.get("x-request-id")!;
-					}
-
-					// Include headers
-					for (const header of ["x-forwarded-for", "authorization"]) {
-						if (ctx.request.headers.has(header)) {
-							logObject.log.request.headers = {
-								...logObject.log.request.headers,
-								[header]: ctx.request.headers.get(header)!,
-							};
-						}
-					}
-
-					if (ctx.isError) {
-						if (
-							(ctx.store as { error?: string | Error | object }).error !==
-							undefined
-						) {
-							logObject.error = (
-								ctx.store as { error: string | Error | object }
-							).error;
-						}
-
-						const message = logObject.formatJson();
-
-						logger.error(message);
-						return true;
-					}
-
-					const message = logObject.formatJson();
-
-					logger.info(message);
-					return true;
-				},
-			},
-		}),
+				}
+			} catch (error) {
+				log.error(error, "Error handling Telnyx SMS webhook");
+			}
+		},
+		{
+			body: TelnyxSMSWebhookPayload,
+		},
 	)
-	.get(
-		"/twilio",
-		async ({ query }) => {
-			const res = new twilio.twiml.VoiceResponse();
-			const connect = res.connect();
-			const stream = connect.stream({
-				url: "wss://9c28-65-24-62-194.ngrok-free.app/ws",
+	.post("/telnyx/voice", async ({ body, log }) => {
+		try {
+			const { data } = body as WebhookPayload;
+
+			const call = new telnyxClient.Call({
+				call_control_id: data.payload.call_control_id,
 			});
 
-			res.say(
-				"Hello, this is Elysia. Please wait while we connect you to an agent.",
-			);
-			const response = new Response(res.toString());
-			response.headers.set("Content-Type", "application/xml");
+			if (data.event_type === "call.initiated") {
+				try {
+					log.info(data, "Received call initiated event");
+					call.answer();
+					return;
+				} catch (error) {
+					log.error(error, "Error initiating call");
+					return {};
+				}
+			}
 
-			return response;
-			//const stream = await client.calls(query.CallSid).streams.create({
-			//	name: "My Media Stream",
-			//	url: "wss://9c28-65-24-62-194.ngrok-free.app/ws",
-			//});
+			if (data.event_type === "call.answered") {
+				log.info(data, "Received call.answered event");
+
+				await callService.initCall(
+					data.payload.call_control_id,
+					data.payload.to,
+					data.payload.from,
+					"telnyx",
+				);
+
+				const { data: stream } = await call.streamingStart({
+					client_state: "aGF2ZSBhIG5pY2UgZGF5ID1d",
+					command_id: "891510ac-f3e4-11e8-af5b-de00688a4901",
+					stream_track: "both_tracks",
+					stream_url: `${env.NOMNOM_WS_URL}/telnyx/ws/${data.payload.call_control_id}`,
+				});
+
+				log.info(stream, "Stream initiated");
+				return {};
+			}
+
+			const { event_type } = data;
+			log.info({ event_type }, "Received Unhandled Telnyx voice webhook");
+			return {};
+		} catch (error) {
+			log.error(error, "Error handling Telnyx voice webhook");
+		}
+	})
+	.group("/telnyx/ws/:id", (api) => {
+		return api
+			.derive(async ({ log, params: { id } }) => {
+				const call = await callService.fetchCall(id);
+
+				log.info(call, "Fetched call from repository");
+				const agentContext = await agentContextFactory.createContext(
+					id,
+					call.to,
+					call.from,
+				);
+				const agent = agentFactory.createAgent(agentContext);
+
+				return {
+					callId: call.callId,
+				};
+			})
+			.get("/", ({ request, log, server }) => {
+				if (server?.upgrade(request)) return;
+				log.error("Upgrade failed");
+				return new Response("Upgrade failed", { status: 500 });
+			})
+			.ws("/", {
+				message: async (
+					{ send, close, data: { log, callId, params } },
+					message,
+				) => {
+					try {
+						const payload = message as WebSocketPayload;
+						//log.info(message, "Received WebSocket message");
+						if (payload.event === "connected") {
+							log.info("Received connected event");
+						}
+
+						if (payload.event === "start") {
+							log.info(message, "Received start event");
+							callService.startCall(
+								callId,
+								async (audio: AsyncGenerator<Buffer>) => {
+									for await (const chunk of audio) {
+										console.log("sending audio to telnyx");
+
+										send(
+											JSON.stringify({
+												event: "media",
+												stream_id: callId,
+												media: {
+													payload: chunk.toString("base64"),
+												},
+											}),
+										);
+									}
+								},
+							);
+						}
+
+						if (
+							payload.event === "media" &&
+							payload.media?.track === "inbound"
+						) {
+							//log.info("Received media event");
+							try {
+								callService.handleCallAudio(
+									callId,
+									Buffer.from(payload.media.payload, "base64"),
+								);
+							} catch (error) {
+								log.error(error, "Error sending audio to agent");
+								close();
+							}
+						}
+
+						if (payload.event === "stop") {
+							log.info("Received stop event");
+						}
+
+						if (payload.event === "error") {
+							log.error(message, "Received error event");
+							close();
+						}
+					} catch (error) {
+						log.error(error, "Error handling WebSocket message");
+					}
+				},
+				open: ({ data: { log, query } }) => {
+					log.info("WebSocket connection established");
+				},
+				close: ({ data: { log, callId } }) => {
+					log.info("WebSocket connection closed");
+					callService.endCall(callId);
+				},
+				error: ({ error }) => {
+					logger.error(error);
+				},
+			});
+	})
+	.get(
+		"/twilio/voice",
+		async ({ query, log }) => {
+			log.info(query, "Received Twilio voice webhook");
+			if (!query.To) {
+				return new Response("Missing 'To' query parameter", { status: 400 });
+			}
+
+			await callService.initCall(query.CallSid, query.To, query.From, "twilio");
+
+			const stream = await client.calls(query.CallSid).streams.create({
+				url: `${env.NOMNOM_WS_URL}/twilio/ws/${query.CallSid}`,
+			});
+
+			stream.sid;
+			return {};
 		},
 		{
 			query: t.Object({
@@ -130,78 +251,86 @@ const app = new Elysia()
 			}),
 		},
 	)
-	.get("/ws", ({ request, server }) => {
-		if (server?.upgrade(request)) return;
-		return new Response("Upgrade failed", { status: 500 });
-	})
-	.group("/ws", (api) => {
-		return (
-			api
-				//.decorate(() => ({
-				//	deepgram: ,
-				//}))
-				.derive(() => {
-					return {
-						agent: new BasicSessionAgent(deepgram, {
-							getResponse: getOpenAIResponse,
-						}),
-					};
-				})
-				.ws("/", {
-					message: async ({ send, data: { agent, log } }, message) => {
-						const payload = message as TwilioWebSocketMessage;
+	.group("/twilio/ws/:id", (api) => {
+		return api
+			.get("/", ({ request, server }) => {
+				if (server?.upgrade(request)) return;
+				return new Response("Upgrade failed", { status: 500 });
+			})
+			.derive(async ({ log, params: { id } }) => {
+				const call = await callService.fetchCall(id);
 
-						if (payload.event === "connected") {
-							log.info("Received connected event");
-						}
+				log.info(call, "Fetched call from repository");
+				const agentContext = await agentContextFactory.createContext(
+					id,
+					call.to,
+					call.from,
+				);
+				const agent = agentFactory.createAgent(agentContext);
 
-						if (payload.event === "start") {
-							agent.startListening(
-								payload.streamSid,
-								async (audio: AsyncGenerator<Buffer>) => {
-									for await (const chunk of audio) {
-										send(
-											JSON.stringify({
-												event: "media",
-												streamSid: payload.streamSid,
-												media: {
-													payload: chunk.toString("base64"),
-												},
-											}),
-										);
-									}
+				return {
+					callId: call.callId,
+				};
+			})
+			.ws("/", {
+				message: async ({ send, data: { callId, log } }, message) => {
+					const payload = message as TwilioWebSocketMessage;
+
+					if (payload.event === "connected") {
+						log.info("Received connected event");
+					}
+
+					if (payload.event === "start") {
+						log.info(message, "Received start event");
+						callService.startCall(
+							payload.streamSid,
+							async (audio: AsyncGenerator<Buffer>) => {
+								for await (const chunk of audio) {
 									send(
 										JSON.stringify({
-											event: "mark",
+											event: "media",
 											streamSid: payload.streamSid,
-											mark: {
-												name: "Processed media with AI response",
+											media: {
+												payload: chunk.toString("base64"),
 											},
 										}),
 									);
-								},
-							);
-						}
+								}
+								send(
+									JSON.stringify({
+										event: "mark",
+										streamSid: payload.streamSid,
+										mark: {
+											name: "Processed media with AI response",
+										},
+									}),
+								);
+							},
+						);
+					}
 
-						if (payload.event === "media") {
-							agent.sendAudio(Buffer.from(payload.media.payload, "base64"));
-						}
+					if (payload.event === "media") {
+						callService.handleCallAudio(
+							callId,
+							Buffer.from(payload.media.payload, "base64"),
+						);
+					}
 
-						if (payload.event === "stop") {
-							agent.stopListening();
-						}
-					},
-					open: ({ data: { log } }) => {
-						log.info("WebSocket connection established");
-					},
-					close: ({ data: { log } }) => {
-						log.info("WebSocket connection closed");
-					},
-					error: ({ error }) => {
-						logger.error(error);
-					},
-				})
-		);
+					if (payload.event === "stop") {
+						callService.endCall(callId);
+					}
+				},
+				open: ({ data: { log, query } }) => {
+					log.info("WebSocket connection established");
+				},
+				close: ({ data: { log, callId } }) => {
+					log.info("WebSocket connection closed");
+					callService.endCall(callId);
+				},
+				error: ({ error }) => {
+					logger.error(error);
+				},
+			});
 	})
 	.listen(3000);
 

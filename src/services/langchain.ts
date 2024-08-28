@@ -1,86 +1,122 @@
+import z from "zod";
+import { t } from "elysia";
+import env from "@/utils/env";
+import { logger } from "@/utils/logger";
 import {
 	ChatPromptTemplate,
 	MessagesPlaceholder,
 } from "@langchain/core/prompts";
 import { ChatOpenAI } from "@langchain/openai";
+import { ChatAnthropic } from "@langchain/anthropic";
 import { UpstashRedisChatMessageHistory } from "@langchain/community/stores/message/upstash_redis";
 import { RunnableWithMessageHistory } from "@langchain/core/runnables";
+import { tool } from "@langchain/core/tools";
+import type { BindToolsInput } from "@langchain/core/language_models/chat_models";
+import { ToolFactory, type ToolsObject } from "@/agents/tool.factory";
 
-const llm = new ChatOpenAI({
-	model: "chatgpt-4o-latest",
+const openAiChat = new ChatOpenAI({
+	model: "gpt-4o",
 	temperature: 0,
 	maxTokens: undefined,
 	timeout: undefined,
 	maxRetries: 2,
-	apiKey: process.env.OPENAI_API_KEY,
-	// other params...
+	apiKey: env.OPENAI_API_KEY,
+});
+
+const AnthropicChat = new ChatAnthropic({
+	model: "claude-3-5-sonnet-20240620",
+	temperature: 0,
+	maxTokens: undefined,
+	maxRetries: 2,
+	apiKey: env.ANTHROPIC_API_KEY,
 });
 
 const prompt = ChatPromptTemplate.fromMessages([
 	[
 		"system",
-		`You are an AI assistant acting as a restaurant hostess answering phone calls for a restaurant. Your goal is to provide helpful information to customers while maintaining a cordial and professional demeanor. Here is the information about the restaurant:
+		`You are Elysia, an AI restaurant hostess. Interact with customers via phone calls and SMS in a friendly, professional manner. Provide excellent customer service based on the restaurant information provided.
 
 <restaurant_info>
-{RESTAURANT_INFO}
+{restaurant_info}
 </restaurant_info>
 
-When responding to customer queries, follow these guidelines:
-1. Be polite and welcoming in your tone.
-2. Provide accurate information based on the restaurant details provided above.
-3. If a customer asks about something not covered in the restaurant info, politely inform them that you don't have that information and offer to take a message for the manager.
-4. Do not make up any information that is not explicitly stated in the restaurant info.
-5. If a customer requests something the restaurant cannot accommodate (e.g., reservations if the restaurant doesn't take them), politely explain the policy and suggest alternatives if possible.
-6. Keep your responses concise but informative.
+Communication Guidelines:
+- Customer messages are tagged as <call>message</call> for phone calls or <sms phone="customer_phone_number">message</sms> for SMS.
+- Never include these tags in your own responses. Respond in untagged sentences.
+- Tailor your response to the communication channel, considering its limitations and characteristics.
+- Use a warm, welcoming tone and conversational language.
+- Speak in concise, complete sentences.
+- Show enthusiasm for the restaurant and its offerings.
+- Be patient and understanding with customer inquiries.
+- If asked about information not in the restaurant info, politely inform them you don't have that information and offer to take a message for the manager.
+- Consider the conversation history to maintain context and avoid repetition.
+- When asked about directions, store location, or similar tell them the address then send an SMS using the sendSMS tool
 
-Structure your response as follows:
-1. A brief greeting
-2. The answer to the customer's query
-3. Any additional relevant information
-4. A polite closing
+Response Format:
+1. If this is the first interaction, start with a greeting and introduction.
+		1a. Only include the introduction once per conversation
+2. Address the customer's query directly.
+3. If appropriate, ask if there's anything else you can help with.
 
-Here is the customer's query:
-
-<customer_query>
-{customer_query}
-</customer_query>
-
-Please respond to the customer's query as a restaurant hostess would, following the guidelines provided.`,
+Ensure your responses sound natural and conversational, as if spoken over the phone or via SMS.
+ 
+`,
 	],
 	new MessagesPlaceholder("history"),
 	["human", "{customer_query}"],
 ]);
 
-const chain = prompt.pipe(llm);
+export async function updateHistory(
+	sessionId: string,
+	message: string,
+): Promise<void> {
+	const history = new UpstashRedisChatMessageHistory({
+		sessionId,
+		sessionTTL: 3600, // 1 hour
+		config: {
+			url: env.UPSTASH_URL,
+			token: env.UPSTASH_TOKEN,
+		},
+	});
 
-const chainWithHistory = new RunnableWithMessageHistory({
-	runnable: chain,
-	getMessageHistory: (sessionId) =>
-		new UpstashRedisChatMessageHistory({
-			sessionId,
-			sessionTTL: 3600, // 1 hour
-			config: {
-				url: process.env.UPSTASH_URL,
-				token: process.env.UPSTASH_TOKEN,
-			},
-		}),
-	inputMessagesKey: "customer_query",
-	historyMessagesKey: "history",
-});
+	await history.addUserMessage(message);
+}
 
 export async function getOpenAIResponse(
-	transcript: string,
 	sessionId: string,
+	transcript: string,
+	restaurant_info: string,
+	{ tools, toolsByName }: ToolsObject = ToolFactory.emptyTools,
 ): Promise<string> {
 	if (!sessionId) {
 		throw new Error("No session ID provided.");
 	}
 
+	const base = openAiChat.bindTools(tools);
+	const userPromptChain = prompt.pipe(base);
+
+	const history = new UpstashRedisChatMessageHistory({
+		sessionId,
+		sessionTTL: 3600, // 1 hour
+		config: {
+			url: env.UPSTASH_URL,
+			token: env.UPSTASH_TOKEN,
+		},
+	});
+
+	const chainWithHistory = new RunnableWithMessageHistory({
+		runnable: userPromptChain,
+		getMessageHistory: () => history,
+		inputMessagesKey: "customer_query",
+		historyMessagesKey: "history",
+	});
+	const mesages = await history.getMessages();
+	logger.info(mesages, "History:");
 	const completion = await chainWithHistory.invoke(
 		{
 			customer_query: transcript,
-			RESTAURANT_INFO:
-				"The restaurant is open from 11:00 AM to 10:00 PM every day. We offer a variety of dishes, including vegetarian and gluten-free options. We do not take reservations, but we have a waitlist system for busy times. Our address is 123 Main St, Anytown, USA.",
+			date: new Date().toISOString(),
+			restaurant_info,
 		},
 		{
 			configurable: {
@@ -90,8 +126,21 @@ export async function getOpenAIResponse(
 	);
 
 	if (completion.tool_calls?.length && completion.tool_calls?.length > 0) {
-		console.log("Tool calls:", completion.tool_calls);
-		return "I'm sorry, I cannot answer that question at the moment.";
+		const selectedToolCall = completion.tool_calls[0];
+		logger.info(selectedToolCall.args, "Tool calls:");
+
+		const toolMessage =
+			await toolsByName[selectedToolCall.name].invoke(selectedToolCall);
+
+		logger.info(toolMessage, "Tool message:");
+
+		await history.addMessage(toolMessage);
+		const messages = await history.getMessages();
+
+		const toolCompletion = await base.invoke(messages);
+		await history.addMessage(toolCompletion);
+
+		return toolCompletion.content as string;
 	}
 
 	return completion.content as string;

@@ -16,6 +16,7 @@ NomNom is an innovative restaurant answering service that leverages AI Language 
 - 🍞 [Bun](https://bun.sh/) - JavaScript runtime
 - 🧠 [Langchain](https://github.com/hwchase17/langchainjs) - AI language model integration
 - 🗄️ [Upstash](https://console.upstash.com/) - Serverless Redis In-memory data store
+- 🗄️ [Neon](https://console.neon.tech/) - Serverless Postgres + Drizzle ORM
 - 📞 [Twilio](https://www.twilio.com/) - Voice and SMS communication
 - 🎙️ [Deepgram](https://deepgram.com/) - Speech-to-text conversion
 
@@ -66,11 +67,12 @@ bun run dev
 ## 🗺️ Roadmap
 
 - [x] MVP release with basic conversational functionality
+- [ ] Implement storage for customers, restaurants, and customers
 - [ ] Integration with popular restaurant management systems
-- [ ] Multi-language support for international customers
 - [ ] Personalized recommendations based on customer preferences
 - [ ] Voice-based ordering and reservation system
 - [ ] Advanced analytics and reporting dashboard
+- [ ] Multi-language support for international customers
 
 ## 🤝 Contributing
 

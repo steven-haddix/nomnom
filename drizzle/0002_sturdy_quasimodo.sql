@@ -1,0 +1,1 @@
+ALTER TABLE "restaurants" ALTER COLUMN "delivery_options" SET DATA TYPE varchar(100);

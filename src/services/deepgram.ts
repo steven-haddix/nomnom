@@ -3,15 +3,16 @@ import {
 	LiveTranscriptionEvents,
 	type ListenLiveClient,
 } from "@deepgram/sdk";
-import type { AudioProcessingService } from "@/types/interfaces";
+import env from "@/utils/env";
 import { logger } from "@/utils/logger";
+import type { AudioProcessingService } from "@/types/interfaces";
 
 export class DeepgramService implements AudioProcessingService {
 	private client;
 	private liveSessions: Map<string, ListenLiveClient>;
 
 	constructor() {
-		this.client = createClient(process.env.DEEPGRAM_API_KEY);
+		this.client = createClient(env.DEEPGRAM_API_KEY);
 		this.liveSessions = new Map();
 		logger.info("DeepgramService initialized");
 	}
@@ -22,8 +23,8 @@ export class DeepgramService implements AudioProcessingService {
 			{ text },
 			{
 				model: "aura-asteria-en",
-				encoding: "mulaw",
-				sample_rate: 8000,
+				encoding: "mp3",
+				//sample_rate: 8000,
 				channels: 1,
 			},
 		);
@@ -52,7 +53,7 @@ export class DeepgramService implements AudioProcessingService {
 			encoding: "mulaw",
 			smart_format: true,
 			filler_words: true,
-			endpointing: 1000,
+			endpointing: 500,
 			sample_rate: 8000,
 			channels: 1,
 		});
@@ -69,7 +70,7 @@ export class DeepgramService implements AudioProcessingService {
 			live.on(LiveTranscriptionEvents.Transcript, (data) => {
 				const transcript = data.channel.alternatives[0].transcript;
 				logger.info("Deepgram Transcript:", transcript);
-				if (transcript === "") {
+				if (!transcript) {
 					logger.info("Empty transcript received");
 					return;
 				}
