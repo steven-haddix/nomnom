@@ -1,7 +1,11 @@
 // restaurantAgent.service.ts
 import type { CallService } from "@/services/call.service";
 import type { MessageService } from "@/services/message.service";
-import { getOpenAIResponse, updateHistory } from "@/services/langchain";
+import {
+	getOpenAIResponse,
+	getResponseStream,
+	updateHistory,
+} from "@/services/langchain";
 import { logger } from "@/utils/logger";
 import type { RestaurantSelect } from "@/db/schema";
 import type { AgentContext } from "@/types/interfaces";
@@ -38,13 +42,14 @@ export class RestaurantAgent {
 
 			try {
 				const restaurantInfo = this.getRestaurantInfo();
-				const response = await getOpenAIResponse(
+				const response = await getResponseStream(
 					sessionId,
 					`<call_started phone="${from}" />`,
 					restaurantInfo,
 					this.tools,
 				);
-				this.callService.speakToCall(callId, response);
+
+				this.callService.speakToCallStream(callId, response);
 			} catch (error) {
 				logger.error("Error processing transcript:", error);
 				this.callService.speakToCall(

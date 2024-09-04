@@ -43,6 +43,45 @@ export class DeepgramService implements AudioProcessingService {
 		}
 	}
 
+	async *synthesizeSpeechStream(
+		textStream: AsyncIterable<string>,
+	): AsyncGenerator<Buffer> {
+		logger.info("Synthesizing speech with Deepgram");
+		const textChunks: string[] = [];
+		const audioChunks: Buffer[] = [];
+
+		for await (const text of textStream) {
+			textChunks.push(text);
+			const response = await this.client.speak.request(
+				{ text },
+				{
+					model: "aura-asteria-en",
+					encoding: "mp3",
+					channels: 1,
+				},
+			);
+			const stream = await response.getStream();
+
+			if (stream) {
+				const reader = stream.getReader();
+				const audioChunk: Buffer[] = [];
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					audioChunk.push(Buffer.from(value));
+				}
+				audioChunks.push(Buffer.concat(audioChunk));
+			} else {
+				logger.error("Error generating audio:", stream);
+				throw new Error("Error generating audio: Stream is empty");
+			}
+		}
+
+		for (let i = 0; i < textChunks.length; i++) {
+			yield audioChunks[i];
+		}
+	}
+
 	createSession(sessionId: string, onTranscript: (transcript: string) => void) {
 		if (this.liveSessions.has(sessionId)) {
 			throw new Error(`Session with ID ${sessionId} already exists`);
@@ -69,15 +108,16 @@ export class DeepgramService implements AudioProcessingService {
 
 			live.on(LiveTranscriptionEvents.Transcript, (data) => {
 				const transcript = data.channel.alternatives[0].transcript;
-				logger.info("Deepgram Transcript:", transcript);
 				if (!transcript) {
-					logger.info("Empty transcript received");
+					//logger.info("Empty transcript received");
 					return;
 				}
 
+				logger.info({ transcript }, "Deepgram Transcript:");
+
 				logger.info(
+					{ transcript: data.channel.alternatives[0].transcript },
 					`Deepgram live streaming transcript for session ${sessionId}:`,
-					data.channel.alternatives[0].transcript,
 				);
 				onTranscript(transcript);
 			});

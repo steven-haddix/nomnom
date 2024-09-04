@@ -145,3 +145,64 @@ export async function getOpenAIResponse(
 
 	return completion.content as string;
 }
+
+export async function* getResponseStream(
+	sessionId: string,
+	transcript: string,
+	restaurant_info: string,
+	{ tools, toolsByName }: ToolsObject = ToolFactory.emptyTools,
+	chunkSize = 100000, // Adjust the chunk size as needed
+) {
+	if (!sessionId) {
+		throw new Error("No session ID provided.");
+	}
+
+	const base = openAiChat;
+	const userPromptChain = prompt.pipe(base);
+
+	const history = new UpstashRedisChatMessageHistory({
+		sessionId,
+		sessionTTL: 3600, // 1 hour
+		config: {
+			url: env.UPSTASH_URL,
+			token: env.UPSTASH_TOKEN,
+		},
+	});
+
+	const chainWithHistory = new RunnableWithMessageHistory({
+		runnable: userPromptChain,
+		getMessageHistory: () => history,
+		inputMessagesKey: "customer_query",
+		historyMessagesKey: "history",
+	});
+
+	const completion = await chainWithHistory.stream(
+		{
+			customer_query: transcript,
+			date: new Date().toISOString(),
+			restaurant_info,
+		},
+		{
+			configurable: {
+				sessionId,
+			},
+		},
+	);
+
+	let buffer = "";
+
+	for await (const message of completion) {
+		if (message.content !== "") {
+			buffer += message.content;
+
+			if (buffer.length >= chunkSize) {
+				yield buffer;
+				buffer = "";
+			}
+		}
+	}
+
+	if (buffer.length > 0) {
+		yield buffer;
+	}
+}

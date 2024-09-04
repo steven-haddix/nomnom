@@ -4,6 +4,7 @@ import type {
 	AudioProcessingService,
 	LanguageModelService,
 	AgentService,
+	SpeechService,
 } from "@/types/interfaces";
 import type RestaurantService from "@/services/restaurant";
 import type { RestaurantSelect } from "@/db/schema";
@@ -23,7 +24,10 @@ export class CallService {
 	private callSessions: Map<CallId, CallSession> = new Map();
 	private eventEmitter: EventEmitter = new EventEmitter();
 
-	constructor(private audioProcessingService: AudioProcessingService) {
+	constructor(
+		private audioProcessingService: AudioProcessingService,
+		private speechService: SpeechService,
+	) {
 		logger.info("CallService initialized");
 	}
 
@@ -173,8 +177,18 @@ export class CallService {
 			throw new Error(`Call session not found for callId: ${callId}`);
 		}
 
-		const audio = this.audioProcessingService.synthesizeSpeech(text);
+		const audio = this.speechService.synthesizeSpeech(text);
 		callSession.onSpeaking(audio);
+	}
+
+	async speakToCallStream(callId: string, textStream: AsyncIterable<string>) {
+		const callSession = this.callSessions.get(callId);
+		if (!callSession) {
+			throw new Error(`Call session not found for callId: ${callId}`);
+		}
+
+		const audioStream = this.speechService.synthesizeSpeechStream(textStream);
+		callSession.onSpeaking(audioStream);
 	}
 
 	onCallStarted(listener: (callId: string) => void) {

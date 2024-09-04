@@ -14,6 +14,16 @@ export interface AudioProcessingService {
 	sendAudio(sessionId: string, audio: Buffer): void;
 	deleteSession(sessionId: string): void;
 	synthesizeSpeech(text: string): AsyncGenerator<Buffer>;
+	synthesizeSpeechStream(
+		textStream: AsyncIterable<string>,
+	): AsyncGenerator<Buffer>;
+}
+
+export interface SpeechService {
+	synthesizeSpeech(text: string): AsyncGenerator<Buffer>;
+	synthesizeSpeechStream(
+		textStream: AsyncIterable<string>,
+	): AsyncGenerator<Buffer>;
 }
 
 export interface LanguageModelService {

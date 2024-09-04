@@ -184,9 +184,9 @@ export const logPlugin = logger.into({
 				return true;
 			}
 
-			const message = logObject.formatJson();
+			//const message = logObject.formatJson();
 
-			logger.info(message);
+			//logger.info(message);
 			return true;
 		},
 	},

@@ -1,19 +1,17 @@
 import { Elysia, t } from "elysia";
 import twilio from "twilio";
 import env from "@/utils/env";
-import { Log, logger, logPlugin } from "@/utils/logger";
+import { logger, logPlugin } from "@/utils/logger";
 import "@/utils/polyfill";
-import { callRepository } from "@/kv/schema";
-import { ConversationService } from "@/services/conversation";
 import { DeepgramService } from "@/services/deepgram";
-import { getOpenAIResponse } from "@/services/langchain";
-import RestaurantService from "./services/restaurant";
-import type { WebSocketPayload, WebhookPayload } from "@/types/telnyx";
-import { AgentContextFactory } from "./agents/agent-context.factory";
+import { ElevenLabsService } from "@/services/eleven-labs.service";
+import RestaurantService from "@/services/restaurant";
 import { CallService } from "@/services/call.service";
 import { MessageService } from "@/services/message.service";
 import { AgentFactory } from "@/agents/agent.factory";
+import { AgentContextFactory } from "@/agents/agent-context.factory";
 import { TelnyxSMSWebhookPayload } from "@/models/telnyx.model";
+import type { WebSocketPayload, WebhookPayload } from "@/types/telnyx";
 
 const accountSid = env.TWILIO_ACCOUNT_SID;
 const authToken = env.TWILIO_AUTH_TOKEN;
@@ -30,7 +28,10 @@ const telnyxClient = require("telnyx")(env.TELNYX_API_KEY);
 
 const restaurantService = new RestaurantService();
 const agentContextFactory = new AgentContextFactory(restaurantService);
-const callService = new CallService(new DeepgramService());
+const callService = new CallService(
+	new DeepgramService(),
+	new ElevenLabsService(),
+);
 const messageService = new MessageService();
 const agentFactory = new AgentFactory(callService, messageService);
 
@@ -162,15 +163,45 @@ const app = new Elysia()
 							callService.startCall(
 								callId,
 								async (audio: AsyncGenerator<Buffer>) => {
+									let accumulatedChunks: Buffer[] = [];
+									let lastSendTime = Date.now();
+
 									for await (const chunk of audio) {
-										console.log("sending audio to telnyx");
+										accumulatedChunks.push(chunk);
+
+										const currentTime = Date.now();
+										if (currentTime - lastSendTime >= 1000) {
+											const combinedChunk = Buffer.concat(accumulatedChunks);
+											console.log("Sending accumulated audio to Telnyx");
+
+											send(
+												JSON.stringify({
+													event: "media",
+													stream_id: callId,
+													media: {
+														payload: combinedChunk.toString("base64"),
+													},
+												}),
+											);
+
+											accumulatedChunks = [];
+											lastSendTime = currentTime;
+										}
+									}
+
+									// Send any remaining accumulated chunks
+									if (accumulatedChunks.length > 0) {
+										const combinedChunk = Buffer.concat(accumulatedChunks);
+										console.log(
+											"Sending remaining accumulated audio to Telnyx",
+										);
 
 										send(
 											JSON.stringify({
 												event: "media",
 												stream_id: callId,
 												media: {
-													payload: chunk.toString("base64"),
+													payload: combinedChunk.toString("base64"),
 												},
 											}),
 										);

@@ -15,6 +15,7 @@ const envSchema = Type.Object({
 	OPENAI_API_KEY: Type.String(),
 	ANTHROPIC_API_KEY: Type.String(),
 	DEEPGRAM_API_KEY: Type.String(),
+	ELEVEN_LABS_API_KEY: Type.String(),
 	UPSTASH_URL: Type.String(),
 	UPSTASH_TOKEN: Type.String(),
 	UPSTASH_REDIS_URL: Type.String(),
