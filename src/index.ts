@@ -12,6 +12,7 @@ import { AgentFactory } from "@/agents/agent.factory";
 import { AgentContextFactory } from "@/agents/agent-context.factory";
 import { TelnyxSMSWebhookPayload } from "@/models/telnyx.model";
 import type { WebSocketPayload, WebhookPayload } from "@/types/telnyx";
+import { l1Distance } from "drizzle-orm";
 
 const accountSid = env.TWILIO_ACCOUNT_SID;
 const authToken = env.TWILIO_AUTH_TOKEN;
@@ -127,18 +128,23 @@ const app = new Elysia()
 	.group("/telnyx/ws/:id", (api) => {
 		return api
 			.derive(async ({ log, params: { id } }) => {
-				const call = await callService.fetchCall(id);
+				const callRecord = await callService.fetchCall(id);
 
-				log.info(call, "Fetched call from repository");
+				log.info(callRecord, "Fetched call from repository");
 				const agentContext = await agentContextFactory.createContext(
 					id,
-					call.to,
-					call.from,
+					callRecord.to,
+					callRecord.from,
 				);
 				const agent = agentFactory.createAgent(agentContext);
 
+				const call = new telnyxClient.Call({
+					call_control_id: callRecord.callId,
+				});
+				
 				return {
-					callId: call.callId,
+					call,
+					callId: callRecord.callId,
 				};
 			})
 			.get("/", ({ request, log, server }) => {
@@ -148,7 +154,7 @@ const app = new Elysia()
 			})
 			.ws("/", {
 				message: async (
-					{ send, close, data: { log, callId, params } },
+					{ send, close, data: { call, log, callId, params } },
 					message,
 				) => {
 					try {
@@ -208,6 +214,15 @@ const app = new Elysia()
 									}
 								},
 							);
+
+							callService.onCallTransfer( async (eventCallId, to) => {
+								if (eventCallId === callId) {
+									log.info({ to }, "Transferring call");
+									await call.transfer({
+										to,
+									});
+								}
+							})
 						}
 
 						if (
