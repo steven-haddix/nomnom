@@ -25,7 +25,11 @@ export class RestaurantAgent {
 			this.callService.onCallEnded(this.handleCallEnded.bind(this));
 		}
 
-		this.tools = new ToolFactory(this.messageService).createRestaurantTools();
+		this.tools = new ToolFactory(
+			this.messageService,
+			this.callService,
+			this.context,
+		).createRestaurantTools();
 	}
 
 	private subscribeToCall(callId: string) {
@@ -73,7 +77,7 @@ export class RestaurantAgent {
 		}
 	}
 
-	private async handleTranscript(transcript: string) {
+	async handleTranscript(transcript: string) {
 		if (!this.context.callInfo) {
 			logger.error("No call information available in the context");
 			return;
@@ -84,13 +88,16 @@ export class RestaurantAgent {
 
 		try {
 			const restaurantInfo = this.getRestaurantInfo();
-			const response = await getOpenAIResponse(
+			const response = await getResponseStream(
 				sessionId,
 				`<call phone="${from}">${transcript}</call>`,
 				restaurantInfo,
 				this.tools,
 			);
-			this.callService.speakToCall(callId, response);
+
+			this.callService.speakToCallStream(callId, response);
+
+			//this.callService.speakToCall(callId, response);
 		} catch (error) {
 			logger.error("Error processing transcript:", error);
 			this.callService.speakToCall(

@@ -12,6 +12,7 @@ import { AgentFactory } from "@/agents/agent.factory";
 import { AgentContextFactory } from "@/agents/agent-context.factory";
 import { TelnyxSMSWebhookPayload } from "@/models/telnyx.model";
 import type { WebSocketPayload, WebhookPayload } from "@/types/telnyx";
+import { MockCallService } from "./services/call-mock.service";
 
 const accountSid = env.TWILIO_ACCOUNT_SID;
 const authToken = env.TWILIO_AUTH_TOKEN;
@@ -38,6 +39,35 @@ const agentFactory = new AgentFactory(callService, messageService);
 const app = new Elysia()
 	.use(logPlugin)
 	.decorate(() => ({}))
+	.post(
+		"telnyx/voice/text",
+		async ({ body: { to, from, message }, log }) => {
+			const mockCallService = new MockCallService();
+			const agentFactory = new AgentFactory(mockCallService, messageService);
+
+			mockCallService.startCall("123", async (textGen) => {
+				for await (const chunk of textGen) {
+					console.log(chunk);
+				}
+			});
+
+			const agentContext = await agentContextFactory.createContext(
+				undefined,
+				to,
+				from,
+			);
+			const agent = agentFactory.createAgent(agentContext);
+
+			await agent.handleTranscript(message);
+		},
+		{
+			body: t.Object({
+				to: t.String(),
+				from: t.String(),
+				message: t.String(),
+			}),
+		},
+	)
 	.post(
 		"/telnyx/sms",
 		async ({ body: { data }, log }) => {
@@ -127,18 +157,22 @@ const app = new Elysia()
 	.group("/telnyx/ws/:id", (api) => {
 		return api
 			.derive(async ({ log, params: { id } }) => {
-				const call = await callService.fetchCall(id);
+				const callRecord = await callService.fetchCall(id);
 
-				log.info(call, "Fetched call from repository");
+				log.info(callRecord, "Fetched call from repository");
 				const agentContext = await agentContextFactory.createContext(
 					id,
-					call.to,
-					call.from,
+					callRecord.to,
+					callRecord.from,
 				);
 				const agent = agentFactory.createAgent(agentContext);
+				const call = new telnyxClient.Call({
+					call_control_id: callRecord.callId,
+				});
 
 				return {
-					callId: call.callId,
+					call,
+					callId: callRecord.callId,
 				};
 			})
 			.get("/", ({ request, log, server }) => {
@@ -148,7 +182,7 @@ const app = new Elysia()
 			})
 			.ws("/", {
 				message: async (
-					{ send, close, data: { log, callId, params } },
+					{ send, close, data: { log, callId, call, params } },
 					message,
 				) => {
 					try {
@@ -208,6 +242,12 @@ const app = new Elysia()
 									}
 								},
 							);
+
+							callService.onCallTransfer((eventCallId, toNumber) => {
+								if (eventCallId === callId) {
+									call.transfer({ to: toNumber });
+								}
+							});
 						}
 
 						if (
