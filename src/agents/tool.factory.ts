@@ -70,20 +70,18 @@ export class ToolFactory {
 
 	private createTransferCallTool() {
 		return tool(
-			async({to}) =>{
+			async() =>{
 				try {
-					// add transfer number instead of agentContext.business.phone
-					this.callService.transferCall(this.agentContext.callInfo?.callId || '', this.agentContext.business.phone || '')
-					logger.info(`Transfer call to ${to}`);	
+					this.callService.transferCall(this.agentContext.callInfo?.callId || '', this.agentContext.business.altPhone || '')
 				} catch (error) {
-					
+					logger.error(error, "Error transferring call:")
 				}
 			},
 			{
 				name: "transferCall",
 				description: "Transfer current call to a different phone number",
 				schema: z.object({
-					to: z.string().describe("The phone number of the restaurant humans"),
+					altPhone: z.string().describe("The alternate phone number of the restaurant"),
 				}),
 			}
 		)

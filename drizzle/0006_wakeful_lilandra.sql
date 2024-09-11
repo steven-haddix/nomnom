@@ -1,0 +1,1 @@
+ALTER TABLE "restaurants" ADD COLUMN "alt_phone" varchar(20);

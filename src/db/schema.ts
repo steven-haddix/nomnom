@@ -67,6 +67,7 @@ export const restaurantsTable = pgTable("restaurants", {
 	name: varchar("name", { length: 255 }).notNull(),
 	address: varchar("address", { length: 255 }),
 	phone: varchar("phone", { length: 20 }),
+	altPhone: varchar("alt_phone", { length: 20 }),
 	website: varchar("website", { length: 255 }),
 	operatingHours: jsonb("operating_hours"),
 	cuisineType: varchar("cuisine_type", { length: 50 }),
