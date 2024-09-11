@@ -80,9 +80,6 @@ export class ToolFactory {
 			{
 				name: "transferCall",
 				description: "Transfer current call to a different phone number",
-				schema: z.object({
-					altPhone: z.string().describe("The alternate phone number of the restaurant"),
-				}),
 			}
 		)
 	}
