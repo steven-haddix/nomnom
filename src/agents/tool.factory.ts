@@ -3,6 +3,8 @@ import { tool } from "@langchain/core/tools";
 import type { MessageService } from "@/services/message.service";
 import { logger } from "@/utils/logger";
 import type { StructuredTool } from "@langchain/core/tools";
+import type { CallService } from "@/services/call.service";
+import type { AgentContext } from "@/types/interfaces";
 
 export type ToolsObject = {
 	tools: StructuredTool[];
@@ -10,7 +12,11 @@ export type ToolsObject = {
 };
 
 export class ToolFactory {
-	constructor(private messageService: MessageService) {}
+	constructor(
+		private messageService: MessageService,
+		private callService: CallService,
+		private agentContent: AgentContext,
+	) {}
 
 	createRestaurantTools(): ToolsObject {
 		const sendSMSTool = this.createSendSMSTool();

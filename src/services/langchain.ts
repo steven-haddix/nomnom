@@ -6,6 +6,7 @@ import {
 	ChatPromptTemplate,
 	MessagesPlaceholder,
 } from "@langchain/core/prompts";
+import { concat } from "@langchain/core/utils/stream";
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { UpstashRedisChatMessageHistory } from "@langchain/community/stores/message/upstash_redis";
@@ -111,7 +112,7 @@ export async function getOpenAIResponse(
 		historyMessagesKey: "history",
 	});
 	const mesages = await history.getMessages();
-	logger.info(mesages, "History:");
+	//logger.info(mesages, "History:");
 	const completion = await chainWithHistory.invoke(
 		{
 			customer_query: transcript,
@@ -127,12 +128,10 @@ export async function getOpenAIResponse(
 
 	if (completion.tool_calls?.length && completion.tool_calls?.length > 0) {
 		const selectedToolCall = completion.tool_calls[0];
-		logger.info(selectedToolCall.args, "Tool calls:");
+		logger.info(selectedToolCall, "Tool calls:");
 
 		const toolMessage =
 			await toolsByName[selectedToolCall.name].invoke(selectedToolCall);
-
-		logger.info(toolMessage, "Tool message:");
 
 		await history.addMessage(toolMessage);
 		const messages = await history.getMessages();
@@ -157,7 +156,7 @@ export async function* getResponseStream(
 		throw new Error("No session ID provided.");
 	}
 
-	const base = openAiChat;
+	const base = openAiChat.bindTools(tools);
 	const userPromptChain = prompt.pipe(base);
 
 	const history = new UpstashRedisChatMessageHistory({
@@ -190,8 +189,12 @@ export async function* getResponseStream(
 	);
 
 	let buffer = "";
+	let toolChunks = undefined;
 
 	for await (const message of completion) {
+		toolChunks =
+			toolChunks !== undefined ? concat(toolChunks, message) : message;
+
 		if (message.content !== "") {
 			buffer += message.content;
 
@@ -199,6 +202,36 @@ export async function* getResponseStream(
 				yield buffer;
 				buffer = "";
 			}
+		}
+	}
+
+	if (
+		toolChunks?.tool_call_chunks?.length &&
+		toolChunks?.tool_call_chunks?.length > 0
+	) {
+		logger.info(`Tool calls: ${toolChunks.tool_call_chunks.length}`);
+		for (const toolCall of toolChunks.tool_call_chunks) {
+			if (toolCall.name === undefined || toolCall.args === undefined) {
+				logger.warn(toolCall, "Tool call name is undefined");
+				continue;
+			}
+
+			logger.info(toolCall, "Final Tool:");
+			const args: Record<string, object> = JSON.parse(toolCall.args);
+			const toolMessage = await toolsByName[toolCall.name].invoke({
+				id: toolCall.id,
+				type: "tool_call",
+				args,
+			});
+
+			logger.info(toolMessage, "Tool message:");
+			await history.addMessage(toolMessage);
+			const messages = await history.getMessages();
+
+			const toolCompletion = await base.invoke(messages);
+			await history.addMessage(toolCompletion);
+
+			yield toolCompletion.content as string;
 		}
 	}
 

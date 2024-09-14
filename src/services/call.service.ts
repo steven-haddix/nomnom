@@ -199,6 +199,14 @@ export class CallService {
 		this.eventEmitter.off("callStarted", listener);
 	}
 
+	transferCall(callId: string, toNumber: string) {
+		this.eventEmitter.emit("callTransfered", callId, toNumber);
+	}
+
+	onCallTransfer(listener: (callId: string, toNumber: string) => void) {
+		this.eventEmitter.on("callTransfered", listener);
+	}
+
 	private sendTranscriptToListeners(callId: string, transcript: string) {
 		const callSession = this.callSessions.get(callId);
 		if (!callSession) {
