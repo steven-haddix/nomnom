@@ -6,7 +6,7 @@ export class ElevenLabsService implements SpeechService {
 	private client: ElevenLabsClient;
 
 	constructor() {
-		this.client = new ElevenLabsClient({ apiKey: env.ELEVEN_LABS_API_KEY });
+		this.client = new ElevenLabsClient({ apiKey: env.ELEVENLABS_API_KEY });
 	}
 
 	async *synthesizeSpeech(text: string): AsyncGenerator<Buffer> {
