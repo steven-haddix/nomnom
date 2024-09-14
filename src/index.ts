@@ -130,7 +130,7 @@ const app = new Elysia()
 			.derive(async ({ log, params: { id } }) => {
 				const callRecord = await callService.fetchCall(id);
 
-				log.info(callRecord, "Fetched call from repository");
+				// log.info(callRecord, "Fetched call from repository");
 				const agentContext = await agentContextFactory.createContext(
 					id,
 					callRecord.to,
@@ -159,7 +159,9 @@ const app = new Elysia()
 				) => {
 					try {
 						const payload = message as WebSocketPayload;
-						//log.info(message, "Received WebSocket message");
+						if(payload.event !== 'media') {
+							log.info(message, "Received WebSocket message");
+						}
 						if (payload.event === "connected") {
 							log.info("Received connected event");
 						}
@@ -218,6 +220,8 @@ const app = new Elysia()
 							callService.onCallTransfer( async (eventCallId, to) => {
 								if (eventCallId === callId) {
 									log.info({ to }, "Transferring call");
+									callService.speakToCall(callId, "Please wait while I transfer your call");
+									// TODO: get this to await longer than 1 second
 									await call.transfer({
 										to,
 									});
