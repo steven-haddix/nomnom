@@ -26,7 +26,6 @@ export class AgentContextFactory {
 					type: "restaurant",
 					operatingHours: restaurant.operatingHours as string,
 				};
-				console.info('Restaurant info:', restaurant)
 			}
 		}
 

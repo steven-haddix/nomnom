@@ -12,7 +12,6 @@ import { AgentFactory } from "@/agents/agent.factory";
 import { AgentContextFactory } from "@/agents/agent-context.factory";
 import { TelnyxSMSWebhookPayload } from "@/models/telnyx.model";
 import type { WebSocketPayload, WebhookPayload } from "@/types/telnyx";
-import { l1Distance } from "drizzle-orm";
 
 const accountSid = env.TWILIO_ACCOUNT_SID;
 const authToken = env.TWILIO_AUTH_TOKEN;
