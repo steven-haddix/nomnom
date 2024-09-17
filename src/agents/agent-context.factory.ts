@@ -22,6 +22,7 @@ export class AgentContextFactory {
 					name: restaurant.name,
 					address: restaurant.address,
 					phone: restaurant.phone,
+					altPhone: restaurant.altPhone,
 					type: "restaurant",
 					operatingHours: restaurant.operatingHours as string,
 				};

@@ -220,4 +220,12 @@ export class CallService {
 			listener(audio);
 		}
 	}
+
+	transferCall(callId: string, toNumber: string) {
+		this.eventEmitter.emit("callTransfered", callId, toNumber);
+	}
+
+	onCallTransfer(listener: (callId: string, toNumber: string) => void) {
+		this.eventEmitter.on("callTransfered", listener);
+	}
 }

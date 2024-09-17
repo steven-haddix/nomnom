@@ -3,6 +3,8 @@ import { tool } from "@langchain/core/tools";
 import type { MessageService } from "@/services/message.service";
 import { logger } from "@/utils/logger";
 import type { StructuredTool } from "@langchain/core/tools";
+import { CallService } from "@/services/call.service";
+import { AgentContext } from "@/types/interfaces";
 
 export type ToolsObject = {
 	tools: StructuredTool[];
@@ -10,13 +12,19 @@ export type ToolsObject = {
 };
 
 export class ToolFactory {
-	constructor(private messageService: MessageService) {}
+	constructor(
+		private messageService: MessageService, 
+		private callService: CallService, 
+		private agentContext: AgentContext
+	) {}
 
 	createRestaurantTools(): ToolsObject {
 		const sendSMSTool = this.createSendSMSTool();
+		const transferCallTool = this.createTransferCallTool();
 
 		const toolsByName: Record<string, StructuredTool> = {
 			sendSMS: sendSMSTool,
+			transferCall: transferCallTool
 			// Add more restaurant-specific tools here
 		};
 
@@ -58,5 +66,21 @@ export class ToolFactory {
 				}),
 			},
 		);
+	}
+
+	private createTransferCallTool() {
+		return tool(
+			async() =>{
+				try {
+					this.callService.transferCall(this.agentContext.callInfo?.callId || '', this.agentContext.business.altPhone || '')
+				} catch (error) {
+					logger.error(error, "Error transferring call:")
+				}
+			},
+			{
+				name: "transferCall",
+				description: "Transfer current call to a different phone number",
+			}
+		)
 	}
 }

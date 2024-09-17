@@ -25,7 +25,7 @@ export class RestaurantAgent {
 			this.callService.onCallEnded(this.handleCallEnded.bind(this));
 		}
 
-		this.tools = new ToolFactory(this.messageService).createRestaurantTools();
+		this.tools = new ToolFactory(this.messageService, this.callService, this.context).createRestaurantTools();
 	}
 
 	private subscribeToCall(callId: string) {

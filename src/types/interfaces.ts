@@ -49,6 +49,7 @@ export interface Business {
 	type: string;
 	address?: string | null;
 	phone?: string | null;
+	altPhone?: string | null;
 	website?: string | null;
 	operatingHours?: string | null;
 	// Add other common business properties as needed

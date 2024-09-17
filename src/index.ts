@@ -127,18 +127,23 @@ const app = new Elysia()
 	.group("/telnyx/ws/:id", (api) => {
 		return api
 			.derive(async ({ log, params: { id } }) => {
-				const call = await callService.fetchCall(id);
+				const callRecord = await callService.fetchCall(id);
 
-				log.info(call, "Fetched call from repository");
+				// log.info(callRecord, "Fetched call from repository");
 				const agentContext = await agentContextFactory.createContext(
 					id,
-					call.to,
-					call.from,
+					callRecord.to,
+					callRecord.from,
 				);
 				const agent = agentFactory.createAgent(agentContext);
 
+				const call = new telnyxClient.Call({
+					call_control_id: callRecord.callId,
+				});
+				
 				return {
-					callId: call.callId,
+					call,
+					callId: callRecord.callId,
 				};
 			})
 			.get("/", ({ request, log, server }) => {
@@ -148,12 +153,14 @@ const app = new Elysia()
 			})
 			.ws("/", {
 				message: async (
-					{ send, close, data: { log, callId, params } },
+					{ send, close, data: { call, log, callId, params } },
 					message,
 				) => {
 					try {
 						const payload = message as WebSocketPayload;
-						//log.info(message, "Received WebSocket message");
+						if(payload.event !== 'media') {
+							log.info(message, "Received WebSocket message");
+						}
 						if (payload.event === "connected") {
 							log.info("Received connected event");
 						}
@@ -208,6 +215,17 @@ const app = new Elysia()
 									}
 								},
 							);
+
+							callService.onCallTransfer( async (eventCallId, to) => {
+								if (eventCallId === callId) {
+									log.info({ to }, "Transferring call");
+									callService.speakToCall(callId, "Please wait while I transfer your call");
+									// TODO: get this to await longer than 1 second
+									await call.transfer({
+										to,
+									});
+								}
+							})
 						}
 
 						if (
